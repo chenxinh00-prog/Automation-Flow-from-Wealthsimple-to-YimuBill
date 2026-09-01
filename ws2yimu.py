@@ -5,7 +5,7 @@ Wealthsimple 信用卡 CSV -> 一木记账「自定义导入」CSV
 用法:
     python3 ws2yimu.py credit-card-activities-2026-09-01.csv
     python3 ws2yimu.py in.csv -o out.csv -c categories.toml
-    python3 ws2yimu.py in.csv --no-dedup        
+    python3 ws2yimu.py in.csv --dedup        
 
 导入方式:一木 -> 个人中心 -> 导入/导出 -> Excel/CSV账单导入 -> 自定义导入
 列映射(输出文件的表头已经是中文,一木大概率能自动对上,对不上就手动选):

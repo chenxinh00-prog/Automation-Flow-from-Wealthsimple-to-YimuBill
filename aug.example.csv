@@ -1,0 +1,20 @@
+transaction_date,transaction_type,status,merchant,amount,currency,notes,category
+2026-08-31,Payment,Completed,,1000,CAD,,Uncategorized
+2026-08-30,Purchase,Completed,Torprkaut,-12,CAD,,"Gas, parking, and tolls"
+2026-08-27,Purchase,Completed,Sg*V*Blssmupbill.Com,-1.5,CAD,,Services
+2026-08-27,Purchase,Completed,T&T Supermarket #035,-55.27,CAD,,Groceries
+2026-08-27,Purchase,Completed,Saint Germain Bakery,-17.48,CAD,,Other food and drink
+2026-08-27,Purchase,Completed,Mcdonalds 40254,-1.05,CAD,,Restaurants
+2026-08-25,Purchase,Completed,Shell C12579,-63.43,CAD,,"Gas, parking, and tolls"
+2026-08-25,Purchase,Completed,Priceln*Capsule Reside,-146.02,CAD,,Other travel
+2026-08-24,Purchase,Completed,Dopapen Coffee,-44,CAD,,Coffee
+2026-08-24,Purchase,Completed,Staples.Ca,-316.39,CAD,,Other shopping
+2026-08-22,Purchase,Completed,Kream Midland,-7.8,CAD,,Other food and drink
+2026-08-22,Purchase,Completed,Sq *Rooms Coffee ! 17 Bal,-5.42,CAD,,Coffee
+2026-08-22,Purchase,Completed,Quantum Coffee,-7.15,CAD,,Coffee
+2026-08-22,Purchase,Completed,Sq *Nonni Cafe & Bakery,-11.62,CAD,,Coffee
+2026-08-22,Purchase,Completed,Spothero ,-9.99,CAD,,"Gas, parking, and tolls"
+2026-08-21,Purchase,Completed,Petro-Canada 65008,-19.99,CAD,,"Gas, parking, and tolls"
+2026-08-21,Purchase,Completed,Specsavers Bayview Gle,-210.8,CAD,,Medical
+2026-08-18,Purchase,Completed,Mcdonalds 40330,-3.03,CAD,,Restaurants
+2026-08-16,Purchase,Completed,L'amour Beauty & Life,-42.92,CAD,,Beauty
