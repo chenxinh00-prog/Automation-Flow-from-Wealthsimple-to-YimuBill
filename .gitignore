@@ -1,0 +1,20 @@
+# ---- 交易数据:只入库案例 ----
+*.csv
+!*.example.csv
+
+# # ---- 你的真实配置(含账本名、账户名、常去商户)----
+# categories.toml
+# *.bak
+
+# ---- 去重状态:指纹是 日期|商户|金额,等于交易明细的另一份副本 ----
+.ws2yimu_state.json
+*_state.json
+
+# ---- 常规 ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
+.idea/
+.vscode/

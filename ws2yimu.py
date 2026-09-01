@@ -5,7 +5,7 @@ Wealthsimple 信用卡 CSV -> 一木记账「自定义导入」CSV
 用法:
     python3 ws2yimu.py credit-card-activities-2026-09-01.csv
     python3 ws2yimu.py in.csv -o out.csv -c categories.toml
-    python3 ws2yimu.py in.csv --no-dedup        # 忽略水位线,全量输出
+    python3 ws2yimu.py in.csv --no-dedup        
 
 导入方式:一木 -> 个人中心 -> 导入/导出 -> Excel/CSV账单导入 -> 自定义导入
 列映射(输出文件的表头已经是中文,一木大概率能自动对上,对不上就手动选):
@@ -22,14 +22,14 @@ from collections import Counter
 from pathlib import Path
 
 # Windows 终端默认代码页(cp936/cp1252)打不出中文和 ⚠,会抛 UnicodeEncodeError。
-# 报告是在写完文件之后打印的,崩在这里会导致水位线不落盘,静默破坏去重。
+
 for _s in (sys.stdout, sys.stderr):
     try:
         _s.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
 
-OUT_FIELDS = ["日期", "收支类型", "金额", "一级分类", "二级分类", "账户", "备注"]
+OUT_FIELDS = ["日期", "收支类型", "金额", "类别", "子类", "所属账本", "收支帐户", "备注"]
 
 # 支付网关 / 聚合商前缀:Sq *Rooms Coffee、Priceln*Capsule Reside、TST* 等
 GATEWAY_PREFIX = re.compile(r"^[a-z0-9]{2,10}\s*\*\s*")
@@ -41,10 +41,10 @@ STORE_SUFFIX = re.compile(r"\s+#?[a-z]?\d{3,}\s*$")
 MULTISPACE = re.compile(r"\s+")
 
 
-# ---------------------------------------------------------------- 配置
+# ---------------------------------------------------------------- Config
 
 def load_config(path):
-    """读取 TOML。校验只告警,不抛异常、不改数据。"""
+    """Read TOML。Only Print alert, no exception"""
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
 
@@ -57,13 +57,13 @@ def load_config(path):
     for name in ("category_map", "merchant_map"):
         for key, pair in cfg[name].items():
             if not (isinstance(pair, list) and len(pair) == 2):
-                print(f"⚠ {name}[{key!r}] 不是 [一级, 二级] 两项", file=sys.stderr)
+                print(f"⚠ {name}[{key!r}] is not belong to [Category1, Category2] ", file=sys.stderr)
                 continue
             l1, l2 = pair
             if l1 not in tax or l2 not in tax.get(l1, []):
-                print(f"⚠ {name}[{key!r}] -> {l1}/{l2} 不在 taxonomy 中", file=sys.stderr)
+                print(f"⚠ {name}[{key!r}] -> {l1}/{l2} not in taxonomy", file=sys.stderr)
 
-    # merchant_map 按 key 长度降序,让更具体的 key 先命中
+    # merchant_map 按 key 长度 Desc
     cfg["_merchant_rules"] = sorted(
         cfg["merchant_map"].items(), key=lambda kv: len(kv[0]), reverse=True
     )
@@ -83,7 +83,7 @@ def normalize(merchant):
 
 
 def resolve(ws_category, norm_merchant, cfg):
-    """(一级, 二级)。merchant 子串匹配优先于 category 精确匹配。"""
+    """(一级, 二级)。merchant pritority than category exact match。"""
     for key, pair in cfg["_merchant_rules"]:
         if key in norm_merchant:
             return pair[0], pair[1]
@@ -125,23 +125,74 @@ def read_rows(path):
             return rows
         except UnicodeDecodeError:
             continue
-    raise SystemExit(f"无法解码 {path}:既不是 UTF-8 也不是 cp1252")
+    raise SystemExit(f"Cannot Decode {path}")
 
+# ---------------------------------------------------------------- 回写 TOML
 
-# ---------------------------------------------------------------- 主流程
+def sync_toml(path, unmapped, cfg):
+    """把未命中的 WS category 以注释形式补进 [category_map]。
+
+    只写 category_map:未命中的唯一成因就是 category 没映射。
+    merchant_map 是"WS 归类没错但我不满意"的主观覆盖,脚本判断不了。
+
+    写成注释而不是占位值——占位值会被 resolve 当成有效映射,
+    在一木里创建出真的脏分类,正好毁掉哨兵机制。
+    """
+    path = Path(path)
+    text = path.read_text(encoding="utf-8")
+
+    # 按 category 归拢商户,做注释里的线索
+    examples = {}
+    for (cat, merch), n in unmapped.items():
+        if cat:
+            examples.setdefault(cat, []).append(merch)
+
+    todo = [c for c in sorted(examples)
+            if c not in cfg["category_map"] and f'"{c}"' not in text]
+    if not todo:
+        return 0
+
+    block = ["", "# --- 以下由 --sync-toml 自动补充,取消注释并填好分类 ---"]
+    for cat in todo:
+        ex = ", ".join(sorted(set(examples[cat]))[:3])
+        block.append(f'# 例:{ex}')
+        block.append(f'# "{cat}" = ["", ""]')
+
+    lines = text.splitlines()
+    try:  # 插到 [category_map] 表头之后
+        i = lines.index("[category_map]") + 1
+    except ValueError:  # 没有这张表就整块追加到文件末尾
+        i = len(lines)
+        block.insert(0, "[category_map]")
+    lines[i:i] = block
+
+    backup = path.with_suffix(path.suffix + ".bak")
+    backup.write_text(text, encoding="utf-8")
+    new = "\n".join(lines) + "\n"
+    path.write_text(new, encoding="utf-8")
+
+    try:  # 写坏了就回滚,配置文件不能因为一个便利功能损坏
+        tomllib.loads(new)
+    except tomllib.TOMLDecodeError as e:
+        path.write_text(text, encoding="utf-8")
+        print(f"回写导致 TOML 解析失败,已回滚:{e}", file=sys.stderr)
+        return 0
+    return len(todo)
+# ---------------------------------------------------------------- Main Pipeline
 
 def convert(rows, cfg, seen, use_dedup):
     out, skipped, unmapped = [], Counter(), Counter()
     account = cfg["settings"].get("account", "")
+    dataFrom = cfg["settings"].get("dataFrom", "")
     batch = Counter()
 
     for row in rows:
         # 1) 只要已入账的。pending 金额会变(小费、外币汇率)
         if row.get("status", "").strip().lower() != "completed":
-            skipped["pending / 非 Completed"] += 1
+            skipped["pending / not Completed"] += 1
             continue
 
-        # 2) 排除还款。它是正数,不过滤会变成一笔巨额"收入"
+        # 2) No Payment
         ttype = row.get("transaction_type", "").strip().lower()
         if "payment" in ttype:
             skipped["信用卡还款"] += 1
@@ -181,10 +232,11 @@ def convert(rows, cfg, seen, use_dedup):
             "日期": row["transaction_date"].strip(),
             "收支类型": "支出" if amount < 0 else "收入",
             "金额": f"{abs(amount):.2f}",
-            "一级分类": l1,
-            "二级分类": l2,
-            "账户": account,
-            "备注": note,
+            "类别": l1,
+            "子类": l2,
+            "所属账本": account,
+            "收支帐户": dataFrom,
+            "备注": note
         })
 
     return out, skipped, unmapped, batch
@@ -196,18 +248,22 @@ def main():
     ap.add_argument("-o", "--outfile")
     ap.add_argument("-c", "--config", default="categories.toml")
     ap.add_argument("--state", default=".ws2yimu_state.json")
-    ap.add_argument("--no-dedup", action="store_true")
+    ap.add_argument("--dedup", action="store_true",
+                    help="按状态文件跳过上次已输出的行。一木导入侧自带去重,"
+                            "所以默认关闭——改了 TOML 想重新生成同一批数据时不该被挡住")
+    ap.add_argument("--sync-toml", action="store_true",
+                    help="把未命中的 WS category 以注释形式补进 categories.toml")
     ap.add_argument("--no-bom", action="store_true",
                     help="输出不带 UTF-8 BOM。若一木识别不出中文表头,试试这个")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
     state_path = Path(args.state)
-    seen = load_state(state_path)
+    seen = load_state(state_path) if args.dedup else Counter()
 
     rows = read_rows(args.infile)
 
-    out, skipped, unmapped, batch = convert(rows, cfg, seen, not args.no_dedup)
+    out, skipped, unmapped, batch = convert(rows, cfg, seen, args.dedup)
 
     outfile = args.outfile or str(Path(args.infile).with_suffix("")) + "_yimu.csv"
     # 默认带 BOM(Excel 友好)。一木若因 BOM 认不出首列表头,用 --no-bom
@@ -218,7 +274,7 @@ def main():
         w.writerows(out)
 
     # 先落盘再报告:报告只是打印,不该有机会影响去重状态
-    if not args.no_dedup:
+    if args.dedup:
         seen.update(batch)
         save_state(state_path, seen)
 
@@ -232,8 +288,15 @@ def main():
         print("\n未命中映射(将以待分类进入一木,按需补进 TOML):")
         for (cat, merch), n in unmapped.most_common():
             print(f"  {n:>3}  category={cat!r}  merchant={merch!r}")
+        if args.sync_toml:
+            n = sync_toml(args.config, unmapped, cfg)
+            if n:
+                print(f"\n已在 {args.config} 的 [category_map] 补入 {n} 条注释占位"
+                        f"(备份:{args.config}.bak)")
+            else:
+                print("\n没有需要补入的新 category")
 
-    if not args.no_dedup:
+    if args.dedup:
         print(f"\n水位线已更新:{state_path}({len(seen)} 条指纹)")
 
 
