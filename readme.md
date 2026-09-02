@@ -30,10 +30,10 @@ Python 3.11+(依赖标准库 `tomllib`)。无第三方依赖。
 
 ## 使用
 
+<!-- cp categories.example.toml categories.toml -->
 ```bash
-cp categories.example.toml categories.toml
 # 编辑 categories.toml
-python3 ws2yimu.py example.csv
+python3 ws2yimu.py aug.example.csv
 ```
 
 完整流程:
