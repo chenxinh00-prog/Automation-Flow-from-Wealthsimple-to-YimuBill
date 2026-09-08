@@ -1,5 +1,5 @@
 # ============================================================
-# Wealthsimple 信用卡 -> 一木记账 分类映射配置
+# Wealthsimple Credit Card -> 
 # 配合 ws2yimu.py 使用
 #
 # 三张表,生命周期不同:
@@ -24,7 +24,7 @@
 sentinel_l1 = "待分类"
 
 # 一木已建好的账本名,必须完全一致
-account = "测试"
+account = "日常账本"
 # 一木已建好的账户名,必须完全一致
 dataFrom = "WealthSimple" 
 
@@ -32,7 +32,7 @@ dataFrom = "WealthSimple"
 # ============================================================
 # [taxonomy] 你的分类体系
 # 格式:"一级分类" = ["二级分类", "二级分类", ...]
-# 下面是占位,按你自己的体系改写
+
 # ============================================================
 [taxonomy]
 "自定义的一级分类" = ["自定义的二级分类", "自定义的二级分类"]
@@ -51,19 +51,29 @@ dataFrom = "WealthSimple"
 # ============================================================
 [category_map]
 
+# --- 以下由 --sync-toml 自动补充,取消注释并填好分类 ---
+# 例:saq23153 galeries des so
+# 例:town
+# 例:jean coutu
+
+
 # --- 食品饮料 ---
 "Groceries"            = ["Grocery", ""]
 "Restaurants"          = ["食品餐饮", "外食"]
+"Bars and nightlife" = ["食品餐饮", "外食"]
 "Coffee"               = ["食品餐饮", "饮料酒水"]
 "Other food and drink" = ["食品餐饮", "外食"]  # 烘焙店落在这里
 
 # --- 交通 ---
 "Gas, parking, and tolls" = ["出行交通", "加油"]  # 加油+停车混桶
 "Other transportation"    = ["出行交通", "车"]
+"Public transit" = ["出行交通", "公共交通"]
 
 # --- 购物 ---
 "Clothing"       = ["购物消费", "服饰运动"]
 "Other shopping" = ["购物消费", "其他"]  # 垃圾桶类目
+"Medical" = ["购物消费", "个护美妆"]
+"Gifts" = ["购物消费", "办公用品"]
 
 # --- 旅行 ---
 "Other travel" = ["其他", "旅游"]
@@ -87,6 +97,9 @@ dataFrom = "WealthSimple"
 
 # WS 归成 "Other shopping",但这是日用杂货
 "miniso" = ["购物消费", "日常家居"]
+"taobao" = ["购物消费", "日常家居"]
+
+"amazon" = ["购物消费", "日常家居"]
 
 # WS 归成 "Other travel",Priceline 订的住宿(原文被截断,用尾部子串)
 "capsule reside" = ["其他", "旅游"]
