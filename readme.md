@@ -1,50 +1,52 @@
-# Automation-Flow-from-Wealthsimple-to-YimuBill 信用卡最近账单自动化记账
+# Automation-Flow-from-Wealthsimple-to-YimuBill
 
-将 Wealthsimple 信用卡导出的 CSV 转换为一木记账可导入的格式。
+**English** | [中文](README.zh-CN.md)
 
-金额与日期由脚本填充,分类通过配置文件中的映射规则自动解析,仅未命中的条目需要人工处理。
+Converts Wealthsimple credit card CSV exports into a format importable by Yimu Bookkeeping (一木记账).
 
-## 主要亮点
+Amounts and dates are filled in by the script. Categories are resolved automatically through mapping rules in a configuration file; only unmatched entries need manual handling.
 
-- 从银行账户到你的记账软件。银行每笔交易的分类不完全符合记账习惯？这个工具可以完成映射。
+## Highlights
 
-- 高度便利的自定义。账单里未识别的类别会被程序自动捕捉并放入 toml，只需要手动改写几个字符。
+**From bank account to bookkeeping app.** The issuer's own categorization rarely matches how you actually track spending. This tool maps between them.
 
-- 商户自定义。某个交易商户被银行识别为类别A，但你实际上想把它归为类别B？手动添加一行到 toml - Merchant 里就可以解放双手，解放大脑。
+**Configurable without touching code.** Unrecognized categories are captured automatically and written back into the TOML config as commented stubs — uncomment and fill in a few characters.
 
-- 不需要等到银行每月一次的Statement才导入。随时导出 Recent Activity，随时导入你的软件。更了解自己随时花了多少。
+**Per-merchant overrides.** When the issuer assigns a merchant to category A but you want it in category B, one line in `[merchant_map]` handles it permanently.
 
-## 环境要求
+**No waiting for the monthly statement.** Export Recent Activity whenever you want and import it immediately, instead of once a billing cycle.
 
-Python 3.11+(依赖标准库 `tomllib`)。无第三方依赖。
+## Requirements
 
-## 文件
+Python 3.11+ (uses the standard-library `tomllib`). No third-party dependencies.
 
-| 文件 | 说明 |
+## Files
+
+| File | Description |
 | --- | --- |
-| `ws2yimu.py` | 转换脚本 |
-| `categories.example.toml` | 配置模板 |
-| `categories.toml` | 实际配置,已在 `.gitignore` 中排除 |
-| `example.csv` | 脱敏的 Wealthsimple 导出样本 |
-| `.gitignore` | 排除交易数据、实际配置与去重状态文件 |
+| `ws2yimu.py` | Conversion script |
+| `categories.example.toml` | Configuration template |
+| `categories.toml` | Your actual configuration; excluded via `.gitignore` |
+| `example.csv` | Anonymized Wealthsimple export sample |
+| `.gitignore` | Excludes transaction data, actual configuration, and dedup state |
 
-## 使用
+## Usage
 
-<!-- cp categories.example.toml categories.toml -->
 ```bash
-# 编辑 categories.toml
+cp categories.example.toml categories.toml
+# edit categories.toml
 python3 ws2yimu.py aug.example.csv
 ```
 
-完整流程:
+Full workflow:
 
-1. Wealthsimple → Credit card → Recent activity,导出 CSV
-2. 运行 `ws2yimu.py`,得到 `<infile>_yimu.csv`
-3. 将输出文件传至移动设备
-4. 一木记账 → 个人中心 → 导入/导出 → Excel/CSV 账单导入 → 自定义导入
-5. 在一木中筛选哨兵分类「待分类」,批量补全
+1. Wealthsimple → Credit card → Recent activity → export CSV
+2. Run `ws2yimu.py` to produce `<infile>_yimu.csv`
+3. Transfer the output file to your mobile device
+4. Yimu → Profile → Import/Export → Excel/CSV bill import → Custom import
+5. In Yimu, filter by the sentinel category 「待分类」 and batch-assign
 
-输出示例:
+Sample output:
 
 ```
 读入 19 行,输出 18 行 -> example_yimu.csv
@@ -58,61 +60,59 @@ python3 ws2yimu.py aug.example.csv
     1  category='Beauty'  merchant="l'amour beauty & life"
 ```
 
-### 命令行参数
+### Command-line options
 
-| 参数 | 说明 |
+| Option | Description |
 | --- | --- |
-| `-o, --outfile` | 输出路径,默认 `<infile>_yimu.csv` |
-| `-c, --config` | 配置文件路径,默认 `categories.toml` |
-| `--sync-toml` | 将未命中的 category 以注释形式写回配置文件 |
-| `--no-bom` | 输出不含 UTF-8 BOM |
-| `--dedup` | 依据状态文件跳过已输出的条目,默认关闭 |
-| `--state` | 去重状态文件路径 |
+| `-o, --outfile` | Output path; defaults to `<infile>_yimu.csv` |
+| `-c, --config` | Configuration file path; defaults to `categories.toml` |
+| `--sync-toml` | Write unmatched categories back to the config as commented stubs |
+| `--no-bom` | Emit output without a UTF-8 BOM |
+| `--dedup` | Skip entries already emitted, per the state file; off by default |
+| `--state` | Path to the dedup state file |
 
-## 配置
+## Configuration
 
-配置文件包含三张表:
+The configuration file contains three tables:
 
-**`[taxonomy]`** 声明一木中的分类树,格式为 `"一级分类" = ["二级分类", ...]`。该表不参与转换,仅在加载时用于校验另外两张表的取值。一木在导入时遇到不存在的分类会静默创建,因此此处校验是防止分类树被污染的唯一环节。校验失败仅输出告警,不中止执行。
+**`[taxonomy]`** declares the category tree used in Yimu, in the form `"top-level" = ["subcategory", ...]`. It takes no part in conversion; it is used at load time to validate the values in the other two tables. Yimu silently creates any category it does not recognize on import, so this check is the only safeguard against polluting the category tree. Validation failures emit a warning and do not halt execution.
 
-**`[category_map]`** 将 Wealthsimple 的 category 映射为 `(一级分类, 二级分类)`,精确匹配。
+**`[category_map]`** maps a Wealthsimple category to `(top-level, subcategory)`. Exact match.
 
-**`[merchant_map]`** 将规范化后的商户名映射为 `(一级分类, 二级分类)`,子串匹配,优先级高于 `[category_map]`。用于覆盖 Wealthsimple 归类粒度不足或有误的条目,例如其将加油与停车合并为 `Gas, parking, and tolls`。
+**`[merchant_map]`** maps a normalized merchant name to `(top-level, subcategory)`. Substring match, and takes precedence over `[category_map]`. Use it to override entries where the issuer's granularity is insufficient or wrong — for instance, it merges fuel and parking into `Gas, parking, and tolls`.
 
-详细示例请参考文件。
+See the template file for worked examples.
 
-## 转换行为
+## Conversion behavior
 
-**过滤**  跳过 `status` 非 `Completed` 的条目(pending 交易金额可能变动)与信用卡还款(金额为正,不过滤将计为收入)。
+**Filtering.** Entries with `status` other than `Completed` are skipped (pending amounts can still change), as are credit card payments (positive amounts that would otherwise be recorded as income).
 
-**商户名规范化**  依次剥离支付网关前缀(`Sq *`、`Priceln*`、`Sg*V*` 等,可叠加)、订单号、门店号及 `.ca`/`.com` 后缀,转为小写。`Mcdonalds 40254` 与 `Mcdonalds 40330` 因此归一为同一键。
+**Merchant normalization.** Payment-gateway prefixes (`Sq *`, `Priceln*`, `Sg*V*`, which may stack), order IDs, store numbers, and `.ca`/`.com` suffixes are stripped in sequence, then the name is lowercased. `Mcdonalds 40254` and `Mcdonalds 40330` therefore collapse to the same key.
 
-**分类解析**  优先匹配 `[merchant_map]`,其次 `[category_map]`;均未命中时一级分类取哨兵值「待分类」,二级分类取 Wealthsimple 的原始 category 以保留线索。
+**Category resolution.** `[merchant_map]` is tried first, then `[category_map]`. If neither matches, the top-level category becomes the sentinel value 「待分类」 and the subcategory holds the original Wealthsimple category as a hint.
 
-**输出**  UTF-8 CSV,表头为 `日期 / 收支类型 / 金额 / 类别 / 子类 / 所属账本 / 收支帐户 / 备注`。备注字段保留原始商户名。
+**Output.** UTF-8 CSV with the header `日期 / 收支类型 / 金额 / 类别 / 子类 / 所属账本 / 收支帐户 / 备注`. The note field preserves the original merchant name.
 
-## 已知限制
+## Known limitations
 
-- Wealthsimple 的导出不含时刻,交易时间精度为天。
-- 一木在导入时若二级分类为空,会将整行归入「其他」。仅使用一级分类的类目需写作 `["Grocery", "Grocery"]`。
-- `--dedup` 的指纹为 `日期|商户|金额`,依赖出现次数区分同日同商户同金额的多笔交易,可靠性有限。
-- 一木对 UTF-8 BOM 及含逗号字段(如 `Gas, parking, and tolls`)的解析行为未经验证。
+- Wealthsimple exports carry no time of day; transactions are accurate to the date only.
+- If the subcategory is empty on import, Yimu files the entire row under 「其他」. Categories used at the top level only must be written as `["Grocery", "Grocery"]`.
+- The `--dedup` fingerprint is `date|merchant|amount`, relying on occurrence counts to distinguish multiple same-day transactions at the same merchant for the same amount. Reliability is limited.
+- Yimu's handling of a UTF-8 BOM and of comma-containing fields (such as `Gas, parking, and tolls`) has not been verified.
 
-<!-- TODO: 使用一段时间后补充 -->
+## Privacy
 
-## 隐私
-
-交易数据、实际配置与去重状态均已排除。提交前检查:
+Transaction data, actual configuration, and dedup state are all excluded. Check before committing:
 
 ```bash
 git ls-files | grep -iE '\.csv$|state|\.bak$'
 ```
 
-除 `example.csv` 外应无输出。
+Nothing but `example.csv` should appear.
 
-## 声明
+## Acknowledgement
 
-本仓库的代码与文档在 Claude(Anthropic) 辅助下产出,设计决策与测试验证由作者完成。
+The code and documentation in this repository were produced with the assistance of Claude (Anthropic). Design decisions and verification are the author's.
 
 ## License
 
