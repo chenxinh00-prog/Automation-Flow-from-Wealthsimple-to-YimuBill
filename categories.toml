@@ -1,97 +1,103 @@
 # ============================================================
-# Wealthsimple 信用卡 -> 一木记账 分类映射配置
-# 配合 ws2yimu.py 使用
+# Wealthsimple credit card -> Yimu Bookkeeping category mapping.
+# Used by ws2yimu.py.
 #
-# 三张表,生命周期不同:
-#   [taxonomy]     你的分类体系。权威表,另外两张表的右侧应当在这里存在
-#   [category_map] WS category -> (一级, 二级)。默认映射,精确匹配
-#   [merchant_map] 商户 -> (一级, 二级)。覆盖 category_map,子串匹配
+# Three tables with different lifecycles:
+#   [taxonomy]     Your category tree. The authority; the right-hand side of
+#                  the other two tables should exist here.
+#   [category_map] WS category -> (top-level, subcategory). Exact match.
+#   [merchant_map] Merchant -> (top-level, subcategory). Substring match,
+#                  overrides category_map.
 #
-# 填写方式:把所有 "我自定义的一级分类" / "我自定义的二级分类"
-# 替换成你一木里的**确切**字符串。
+# Replace every placeholder with the exact string used in Yimu.
 #
-# 一木不会校验分类是否存在,写错字它会静默创建一个新分类。
-# 脚本加载时会比对 taxonomy 并打印告警,但不会中止、不会改数据——
-# 告警出现时自己决定怎么处理。
+# Yimu does not validate categories: a typo silently creates a new one. The
+# script checks values against [taxonomy] and prints a warning, but does not
+# halt and does not alter data — decide for yourself when a warning appears.
 # ============================================================
 
 
 [settings]
-# 未命中时使用的哨兵一级分类。一木会自动创建它,这是故意的:
-# 它是一个自清空的待办队列,在一木里筛选它 -> 批量编辑 -> 处理完就空了。
-# 不要用 "其他",那会和你真实的"其他"消费混在一起洗不出来。
-# 未命中行的二级分类会自动填 WS 的原始 category 作为线索。
+# Sentinel top-level category for unmatched rows. Yimu will create it, which
+# is intentional: it is a self-emptying to-do queue — filter by it in Yimu,
+# batch-edit, and it is gone.
+# Do not use "其他" — those rows would mix with genuinely uncategorized
+# spending and could not be separated again.
+# The subcategory of an unmatched row holds the raw WS category as a hint.
 sentinel_l1 = "待分类"
 
-# 一木已建好的账本名,必须完全一致
+# Ledger name as it exists in Yimu; must match exactly.
 account = "测试"
-# 一木已建好的账户名,必须完全一致
+# Account name as it exists in Yimu; must match exactly.
 dataFrom = "WealthSimple" 
 
 
 # ============================================================
-# [taxonomy] 你的分类体系
-# 格式:"一级分类" = ["二级分类", "二级分类", ...]
-# 下面是占位,按你自己的体系改写
+# [taxonomy] Your category tree.
+# Format: "top-level" = ["subcategory", "subcategory", ...]
+# Placeholder below; rewrite it to match your own structure.
 # ============================================================
 [taxonomy]
 "自定义的一级分类" = ["自定义的二级分类", "自定义的二级分类"]
 
 
 # ============================================================
-# [category_map] WS category -> (一级, 二级)
+# [category_map] WS category -> (top-level, subcategory)
 #
-# 下面 9 个是 2026-09-01 那份导出里实际出现的全部 category 值。
-# WS 的完整集合肯定不止这些,遇到新值脚本会在"未命中映射"里打印,
-# 到时候往下加即可。
+# The nine entries below are every category value that appeared in the
+# 2026-09-01 export. WS's full set is certainly larger; new values are listed
+# under "Unmatched" when the script runs and can be added here as they show up.
 #
-# 注意 WS 的粒度取向:Coffee 被单独拆出来(返现档位驱动),
-# 而 "Gas, parking, and tolls" 把加油和停车合成一桶。
-# 这类错配靠 [merchant_map] 逐个覆盖。
+# Note WS's granularity: Coffee is split out on its own (driven by cashback
+# tiers), while "Gas, parking, and tolls" merges fuel and parking into one
+# bucket. Mismatches like that are handled case by case in [merchant_map].
 # ============================================================
 [category_map]
 
-# --- 食品饮料 ---
+# --- Food and drink ---
 "Groceries"            = ["Grocery", ""]
 "Restaurants"          = ["食品餐饮", "外食"]
 "Coffee"               = ["食品餐饮", "饮料酒水"]
-"Other food and drink" = ["食品餐饮", "外食"]  # 烘焙店落在这里
+"Other food and drink" = ["食品餐饮", "外食"]  # bakeries land here
 
-# --- 交通 ---
-"Gas, parking, and tolls" = ["出行交通", "加油"]  # 加油+停车混桶
+# --- Transportation ---
+"Gas, parking, and tolls" = ["出行交通", "加油"]  # fuel and parking combined
 "Other transportation"    = ["出行交通", "车"]
 
-# --- 购物 ---
+# --- Shopping ---
 "Clothing"       = ["购物消费", "服饰运动"]
-"Other shopping" = ["购物消费", "其他"]  # 垃圾桶类目
+"Other shopping" = ["购物消费", "其他"]  # catch-all category
 
-# --- 旅行 ---
+# --- Travel ---
 "Other travel" = ["其他", "旅游"]
 
 
 # ============================================================
-# [merchant_map] 商户覆盖
+# [merchant_map] Per-merchant overrides.
 #
-# key 必须是**规范化之后**的商户名,而且是**子串匹配**:
-# 脚本会剥掉支付网关前缀(Sq */Priceln*)、订单号(/48901789128)、
-# 门店号(#1028 / C12579)、.ca/.com,然后转小写。
-# 所以写 "shell" 就能命中 "Shell C12579",不要写完整原文。
+# Keys must be the **normalized** merchant name, and are matched as a
+# **substring**: the script strips payment gateway prefixes (Sq */Priceln*),
+# order ids (/48901789128), store numbers (#1028 / C12579) and .ca/.com, then
+# lowercases what is left. So "shell" matches "Shell C12579" — do not write
+# the full original string.
 #
-# 多个 key 同时命中时,较长的 key 优先。
-# 只写你对 WS 默认归类不满意的商户,不需要穷举。
+# When several keys match, the longer one wins.
+# Only list merchants whose default WS categorization you disagree with;
+# there is no need to be exhaustive.
 # ============================================================
 [merchant_map]
 
-# WS 归成 "Other shopping",但这是办公/文具
+# WS says "Other shopping", but this is office supplies.
 "staples" = ["购物消费", "办公用品"]
 
-# WS 归成 "Other shopping",但这是日用杂货
+# WS says "Other shopping", but this is household goods.
 "miniso" = ["购物消费", "日常家居"]
 
-# WS 归成 "Other travel",Priceline 订的住宿(原文被截断,用尾部子串)
+# WS says "Other travel"; lodging booked through Priceline. The original name
+# is truncated, so the key uses the trailing substring.
 "capsule reside" = ["其他", "旅游"]
 
-# 商户名被 WS 弄糊了,category 是 "Gas, parking, and tolls",
-# $12 更像停车费。确认后再决定留不留
+# Merchant name mangled by WS; category is "Gas, parking, and tolls", and $12
+# looks more like parking.
 "torprkaut" = ["出行交通", "停车费"]
 "spothero" = ["出行交通", "停车费"]
