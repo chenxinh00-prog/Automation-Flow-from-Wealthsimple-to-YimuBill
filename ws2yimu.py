@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-Wealthsimple 信用卡 CSV -> 一木记账「自定义导入」CSV
+Wealthsimple credit card CSV -> Yimu Bookkeeping "custom import" CSV.
 
-用法:
+Usage:
     python3 ws2yimu.py credit-card-activities-2026-09-01.csv
     python3 ws2yimu.py in.csv -o out.csv -c categories.toml
-    python3 ws2yimu.py in.csv --dedup        
+    python3 ws2yimu.py in.csv --dedup
 
-导入方式:一木 -> 个人中心 -> 导入/导出 -> Excel/CSV账单导入 -> 自定义导入
-列映射(输出文件的表头已经是中文,一木大概率能自动对上,对不上就手动选):
-    一级分类 / 二级分类 / 收支类型 / 金额 / 日期 / 账户 / 备注
+Import path in Yimu:
+    Profile -> Import/Export -> Excel/CSV bill import -> Custom import
+
+The output header is already in Chinese, so Yimu will usually auto-detect the
+columns; if it does not, map them by hand:
+    日期 / 收支类型 / 金额 / 类别 / 子类 / 所属账本 / 收支帐户 / 备注
 """
 
 import argparse
@@ -21,30 +24,35 @@ import tomllib
 from collections import Counter
 from pathlib import Path
 
-# Windows 终端默认代码页(cp936/cp1252)打不出中文和 ⚠,会抛 UnicodeEncodeError。
-
+# Windows consoles default to a non-UTF-8 code page (cp936/cp1252) and raise
+# UnicodeEncodeError when printing Chinese or the warning glyph. The report is
+# printed after the output file is written, so a crash here would leave the
+# dedup state unsaved and silently cause duplicate imports next run.
 for _s in (sys.stdout, sys.stderr):
     try:
         _s.reconfigure(encoding="utf-8", errors="replace")
     except (AttributeError, ValueError):
         pass
 
+# Column names required by Yimu's custom import; these are data, not prose.
 OUT_FIELDS = ["日期", "收支类型", "金额", "类别", "子类", "所属账本", "收支帐户", "备注"]
 
-# 支付网关 / 聚合商前缀:Sq *Rooms Coffee、Priceln*Capsule Reside、TST* 等
+# Payment gateway / aggregator prefix: "Sq *Rooms Coffee", "Priceln*Capsule
+# Reside", "TST*..." and friends.
 GATEWAY_PREFIX = re.compile(r"^[a-z0-9]{2,10}\s*\*\s*")
-# 域名尾巴 + 订单号:Staples.Ca/48901789128
+# Domain tail plus order id: "Staples.Ca/48901789128".
 ORDER_SUFFIX = re.compile(r"/\s*\d{4,}\s*$")
-# 门店号:Loblaw #1028、Shell C12579、T&T Supermarket #035
+# Store number: "Loblaw #1028", "Shell C12579", "T&T Supermarket #035".
 STORE_SUFFIX = re.compile(r"\s+#?[a-z]?\d{3,}\s*$")
-# 残留的孤立标点(截断造成的 "! 17 Bal" 之类先不动,交给子串匹配)
+# Leftover punctuation from truncated names ("! 17 Bal") is deliberately kept;
+# substring matching in resolve() tolerates it.
 MULTISPACE = re.compile(r"\s+")
 
 
 # ---------------------------------------------------------------- Config
 
 def load_config(path):
-    """Read TOML。Only Print alert, no exception"""
+    """Read the TOML config. Validation warns only; it never raises."""
     with open(path, "rb") as f:
         cfg = tomllib.load(f)
 
@@ -57,23 +65,28 @@ def load_config(path):
     for name in ("category_map", "merchant_map"):
         for key, pair in cfg[name].items():
             if not (isinstance(pair, list) and len(pair) == 2):
-                print(f"⚠ {name}[{key!r}] is not belong to [Category1, Category2] ", file=sys.stderr)
+                print(f"⚠ {name}[{key!r}] is not a [top-level, subcategory] pair",
+                      file=sys.stderr)
                 continue
             l1, l2 = pair
             if l1 not in tax or l2 not in tax.get(l1, []):
-                print(f"⚠ {name}[{key!r}] -> {l1}/{l2} not in taxonomy", file=sys.stderr)
+                print(f"⚠ {name}[{key!r}] -> {l1}/{l2} not in taxonomy",
+                      file=sys.stderr)
 
-    # merchant_map 按 key 长度 Desc
+    # Longest key first, so the more specific merchant rule wins.
     cfg["_merchant_rules"] = sorted(
         cfg["merchant_map"].items(), key=lambda kv: len(kv[0]), reverse=True
     )
     return cfg
 
 
-# ---------------------------------------------------------------- 商户
+# ---------------------------------------------------------------- Merchants
 
 def normalize(merchant):
-    """Sq *Rooms Coffee ! 17 Bal -> rooms coffee ! 17 bal"""
+    """Reduce a raw merchant string to a stable lookup key.
+
+    "Sq *Rooms Coffee ! 17 Bal" -> "rooms coffee ! 17 bal"
+    """
     s = (merchant or "").strip().lower()
     s = GATEWAY_PREFIX.sub("", s)
     s = ORDER_SUFFIX.sub("", s)
@@ -83,7 +96,12 @@ def normalize(merchant):
 
 
 def resolve(ws_category, norm_merchant, cfg):
-    """(一级, 二级)。merchant pritority than category exact match。"""
+    """Return (top-level, subcategory).
+
+    merchant_map is matched by substring and takes precedence over
+    category_map, which is matched exactly. If neither hits, fall back to the
+    sentinel category and keep the raw Wealthsimple category as a hint.
+    """
     for key, pair in cfg["_merchant_rules"]:
         if key in norm_merchant:
             return pair[0], pair[1]
@@ -94,11 +112,15 @@ def resolve(ws_category, norm_merchant, cfg):
     return sentinel, (ws_category or "未知")
 
 
-# ---------------------------------------------------------------- 去重
+# ---------------------------------------------------------------- Dedup
 
 def fingerprint(row):
-    """没有 transaction id,只能用 日期|规范化商户|金额。
-    同日同店同额的多笔靠调用方加序号区分。"""
+    """Identify a row by date|normalized merchant|amount.
+
+    The export carries no transaction id, so multiple same-day transactions at
+    the same merchant for the same amount are distinguished by the caller
+    counting occurrences.
+    """
     return f"{row['transaction_date']}|{normalize(row['merchant'])}|{row['amount']}"
 
 
@@ -114,34 +136,41 @@ def save_state(path, counter):
 
 
 def read_rows(path):
-    """WS 目前吐的是纯 ASCII,但商户名里迟早会出现重音符或中文。
-    先按 utf-8(带 BOM 容错)读,失败再退到 cp1252。"""
+    """Read the input CSV, falling back to cp1252 if it is not UTF-8.
+
+    Wealthsimple currently emits pure ASCII, but merchant names will eventually
+    contain accented or non-Latin characters.
+    """
     for enc in ("utf-8-sig", "cp1252"):
         try:
             with open(path, newline="", encoding=enc) as f:
                 rows = list(csv.DictReader(f))
             if enc != "utf-8-sig":
-                print(f"注意:输入文件不是 UTF-8,已按 {enc} 读取", file=sys.stderr)
+                print(f"Note: input is not UTF-8, read as {enc}", file=sys.stderr)
             return rows
         except UnicodeDecodeError:
             continue
-    raise SystemExit(f"Cannot Decode {path}")
+    raise SystemExit(f"Cannot decode {path}: neither UTF-8 nor cp1252")
 
-# ---------------------------------------------------------------- 回写 TOML
+
+# ---------------------------------------------------------------- TOML write-back
 
 def sync_toml(path, unmapped, cfg):
-    """把未命中的 WS category 以注释形式补进 [category_map]。
+    """Append unmatched Wealthsimple categories to [category_map] as comments.
 
-    只写 category_map:未命中的唯一成因就是 category 没映射。
-    merchant_map 是"WS 归类没错但我不满意"的主观覆盖,脚本判断不了。
+    Only category_map is touched: an unmatched row is by definition a category
+    that has no mapping. merchant_map exists for the subjective case where
+    Wealthsimple's category is correct but undesirable, which the script cannot
+    detect.
 
-    写成注释而不是占位值——占位值会被 resolve 当成有效映射,
-    在一木里创建出真的脏分类,正好毁掉哨兵机制。
+    Stubs are written commented out rather than as placeholder values. A
+    placeholder would be treated as a valid mapping by resolve() and would
+    create a real junk category in Yimu, defeating the sentinel mechanism.
     """
     path = Path(path)
     text = path.read_text(encoding="utf-8")
 
-    # 按 category 归拢商户,做注释里的线索
+    # Group merchants under their category to use as hints in the comment.
     examples = {}
     for (cat, merch), n in unmapped.items():
         if cat:
@@ -152,16 +181,16 @@ def sync_toml(path, unmapped, cfg):
     if not todo:
         return 0
 
-    block = ["", "# --- 以下由 --sync-toml 自动补充,取消注释并填好分类 ---"]
+    block = ["", "# --- added by --sync-toml; uncomment and fill in ---"]
     for cat in todo:
         ex = ", ".join(sorted(set(examples[cat]))[:3])
-        block.append(f'# 例:{ex}')
+        block.append(f'# e.g. {ex}')
         block.append(f'# "{cat}" = ["", ""]')
 
     lines = text.splitlines()
-    try:  # 插到 [category_map] 表头之后
+    try:  # Insert just after the [category_map] header.
         i = lines.index("[category_map]") + 1
-    except ValueError:  # 没有这张表就整块追加到文件末尾
+    except ValueError:  # No such table: append the whole block at end of file.
         i = len(lines)
         block.insert(0, "[category_map]")
     lines[i:i] = block
@@ -171,53 +200,58 @@ def sync_toml(path, unmapped, cfg):
     new = "\n".join(lines) + "\n"
     path.write_text(new, encoding="utf-8")
 
-    try:  # 写坏了就回滚,配置文件不能因为一个便利功能损坏
+    try:  # Roll back on a broken write; a convenience feature must not
+          # corrupt the config file.
         tomllib.loads(new)
     except tomllib.TOMLDecodeError as e:
         path.write_text(text, encoding="utf-8")
-        print(f"回写导致 TOML 解析失败,已回滚:{e}", file=sys.stderr)
+        print(f"Write-back produced invalid TOML, rolled back: {e}",
+              file=sys.stderr)
         return 0
     return len(todo)
-# ---------------------------------------------------------------- Main Pipeline
+
+
+# ---------------------------------------------------------------- Main pipeline
 
 def convert(rows, cfg, seen, use_dedup):
     out, skipped, unmapped = [], Counter(), Counter()
-    account = cfg["settings"].get("account", "")
-    dataFrom = cfg["settings"].get("dataFrom", "")
+    account = cfg["settings"].get("account", "")       # -> 所属账本
+    dataFrom = cfg["settings"].get("dataFrom", "")     # -> 收支帐户
     batch = Counter()
 
     for row in rows:
-        # 1) 只要已入账的。pending 金额会变(小费、外币汇率)
+        # 1) Posted transactions only; pending amounts still change (tips, FX).
         if row.get("status", "").strip().lower() != "completed":
             skipped["pending / not Completed"] += 1
             continue
 
-        # 2) No Payment
+        # 2) Drop credit card payments. They are positive and would otherwise
+        #    be recorded as a large income entry.
         ttype = row.get("transaction_type", "").strip().lower()
         if "payment" in ttype:
-            skipped["信用卡还款"] += 1
+            skipped["credit card payment"] += 1
             continue
 
         try:
             amount = float(row["amount"])
         except (TypeError, ValueError):
-            skipped["金额无法解析"] += 1
+            skipped["unparseable amount"] += 1
             continue
         if amount == 0:
-            skipped["零金额"] += 1
+            skipped["zero amount"] += 1
             continue
 
-        # 3) 去重:同一指纹出现第 n 次,和历史记录里的次数比对
+        # 3) Dedup: compare this fingerprint's nth occurrence against history.
         fp = fingerprint(row)
         batch[fp] += 1
         if use_dedup and batch[fp] <= seen.get(fp, 0):
-            skipped["上次已导入"] += 1
+            skipped["already imported"] += 1
             continue
 
-        # 4) 非 CAD 提示一下,不自动换算
+        # 4) Flag non-CAD rows; amounts are not converted.
         cur = row.get("currency", "CAD").strip().upper()
         if cur and cur != "CAD":
-            skipped[f"外币 {cur}(仍会输出,金额未换算)"] += 1
+            skipped[f"foreign currency {cur} (emitted, not converted)"] += 1
 
         norm = normalize(row["merchant"])
         l1, l2 = resolve(row.get("category", "").strip(), norm, cfg)
@@ -249,12 +283,16 @@ def main():
     ap.add_argument("-c", "--config", default="categories.toml")
     ap.add_argument("--state", default=".ws2yimu_state.json")
     ap.add_argument("--dedup", action="store_true",
-                    help="按状态文件跳过上次已输出的行。一木导入侧自带去重,"
-                            "所以默认关闭——改了 TOML 想重新生成同一批数据时不该被挡住")
+                    help="Skip rows already emitted, per the state file. Yimu "
+                         "dedups on import, so this is off by default: editing "
+                         "the TOML and regenerating the same batch should not "
+                         "be blocked.")
     ap.add_argument("--sync-toml", action="store_true",
-                    help="把未命中的 WS category 以注释形式补进 categories.toml")
+                    help="Append unmatched Wealthsimple categories to "
+                         "categories.toml as commented stubs")
     ap.add_argument("--no-bom", action="store_true",
-                    help="输出不带 UTF-8 BOM。若一木识别不出中文表头,试试这个")
+                    help="Emit output without a UTF-8 BOM. Try this if Yimu "
+                         "fails to detect the Chinese header.")
     args = ap.parse_args()
 
     cfg = load_config(args.config)
@@ -266,38 +304,40 @@ def main():
     out, skipped, unmapped, batch = convert(rows, cfg, seen, args.dedup)
 
     outfile = args.outfile or str(Path(args.infile).with_suffix("")) + "_yimu.csv"
-    # 默认带 BOM(Excel 友好)。一木若因 BOM 认不出首列表头,用 --no-bom
+    # BOM by default for Excel. If Yimu cannot detect the first column because
+    # of it, use --no-bom.
     enc = "utf-8" if args.no_bom else "utf-8-sig"
     with open(outfile, "w", newline="", encoding=enc) as f:
         w = csv.DictWriter(f, fieldnames=OUT_FIELDS)
         w.writeheader()
         w.writerows(out)
 
-    # 先落盘再报告:报告只是打印,不该有机会影响去重状态
+    # Persist before reporting: printing must never affect the dedup state.
     if args.dedup:
         seen.update(batch)
         save_state(state_path, seen)
 
-    # ---- 报告
-    print(f"\n读入 {len(rows)} 行,输出 {len(out)} 行 -> {outfile}")
+    # ---- Report
+    print(f"\nRead {len(rows)} rows, wrote {len(out)} rows -> {outfile}")
     if skipped:
-        print("\n跳过:")
+        print("\nSkipped:")
         for reason, n in skipped.most_common():
             print(f"  {n:>3}  {reason}")
     if unmapped:
-        print("\n未命中映射(将以待分类进入一木,按需补进 TOML):")
+        print("\nUnmatched (imported under the sentinel category; add to TOML "
+                "as needed):")
         for (cat, merch), n in unmapped.most_common():
             print(f"  {n:>3}  category={cat!r}  merchant={merch!r}")
         if args.sync_toml:
             n = sync_toml(args.config, unmapped, cfg)
             if n:
-                print(f"\n已在 {args.config} 的 [category_map] 补入 {n} 条注释占位"
-                        f"(备份:{args.config}.bak)")
+                print(f"\nAppended {n} commented stubs to [category_map] in "
+                        f"{args.config} (backup: {args.config}.bak)")
             else:
-                print("\n没有需要补入的新 category")
+                print("\nNo new categories to append")
 
     if args.dedup:
-        print(f"\n水位线已更新:{state_path}({len(seen)} 条指纹)")
+        print(f"\nState updated: {state_path} ({len(seen)} fingerprints)")
 
 
 if __name__ == "__main__":

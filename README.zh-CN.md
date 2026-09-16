@@ -47,6 +47,18 @@ python3 ws2yimu.py aug.example.csv
 输出示例:
 
 ```
+Read 19 rows, wrote 18 rows -> example_yimu.csv
+
+Skipped:
+    1  credit card payment
+
+Unmatched (imported under the sentinel category; add to TOML as needed):
+    1  category='Services'  merchant='v*blssmupbill'
+    1  category='Medical'  merchant='specsavers bayview gle'
+    1  category='Beauty'  merchant="l'amour beauty & life"
+```
+
+```
 读入 19 行,输出 18 行 -> example_yimu.csv
 
 跳过:
